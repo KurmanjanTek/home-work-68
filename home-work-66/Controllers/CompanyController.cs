@@ -55,7 +55,7 @@ public class CompanyController : Controller
 
     [HttpGet]
     [AllowAnonymous]
-    public async Task<IActionResult> GetVacancies(string? searchString, int? categoryId,VacancySortState sortOrder=VacancySortState.SalaryAsc, int page=1)
+    public async Task<IActionResult> GetVacancies(string? searchString, int? categoryId,VacancySortState sortOrder=VacancySortState.DateDesc, int page=1)
     {
         var query = _context.Vacancies
             .Include(v => v.Category)
@@ -85,12 +85,14 @@ public class CompanyController : Controller
             case VacancySortState.TitleDesc:
                 query = query.OrderByDescending(v => v.Title);
                 break;
+            case VacancySortState.DateDesc:
             default:
-                query = query.OrderBy(v => v.Salary);
+                query = query.OrderByDescending(v => v.UpdatedAt ?? v.CreatedAt);
                 break;
         }
          ViewBag.SalarySort = sortOrder == VacancySortState.SalaryAsc ? VacancySortState.SalaryDesc : VacancySortState.SalaryAsc;
          ViewBag.TitleSort = sortOrder == VacancySortState.TitleAsc ? VacancySortState.TitleDesc : VacancySortState.TitleAsc; 
+         ViewBag.SortOrder = sortOrder;
          ViewBag.Categories = await _context.Categories.ToListAsync();
          ViewBag.SearchString=searchString;
          ViewBag.CategoryId=categoryId;
@@ -181,6 +183,11 @@ public class CompanyController : Controller
     [Authorize(Roles = "company")]
     public async Task<IActionResult> CreateVacancy(CreateVacancyViewModel model)
     {
+        if (model.ExperienceFrom > model.ExperienceTo)
+        {
+            ModelState.AddModelError("ExperienceFrom", "Минимальный опыт не может быть больше максимального");
+        }
+        
         if (!ModelState.IsValid)
         {
             var errors = ModelState.Where(x => x.Value != null && x.Value.Errors.Count > 0)
@@ -253,6 +260,11 @@ public class CompanyController : Controller
     [Authorize(Roles = "company")]
     public async Task<IActionResult> EditVacancy(int id, CreateVacancyViewModel model)
     {
+        if (model.ExperienceFrom > model.ExperienceTo)
+        {
+            ModelState.AddModelError("ExperienceTo", "Максимальный опыт не может быть меньше минимального");
+        }
+        
         if (!ModelState.IsValid)
         {
             var errors = ModelState.Where(x => x.Value != null && x.Value.Errors.Count > 0)
