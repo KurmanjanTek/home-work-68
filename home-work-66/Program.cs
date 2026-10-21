@@ -24,6 +24,7 @@ builder.Services.AddDbContext<HeadHunterContext>(options => options.UseNpgsql(co
 builder.Services.AddScoped<ICompanyService, CompanyService>();
 builder.Services.AddScoped<ICategoryService, CategoryService>();
 builder.Services.AddScoped<IChatService, ChatService>();
+builder.Services.AddScoped<IResumeService, ResumeService>();
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.

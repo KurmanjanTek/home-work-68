@@ -1,4 +1,5 @@
 using home_work_66.Models;
+using home_work_66.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
@@ -9,12 +10,12 @@ namespace home_work_66.Controllers;
 [Authorize(Roles = "user,admin,company")]
 public class ResumeController : Controller
 {
-    private readonly HeadHunterContext _db;
     private readonly UserManager<User> _userManager;
+    private readonly IResumeService _resumeService;
 
-    public ResumeController(HeadHunterContext db, UserManager<User> userManager)
+    public ResumeController(IResumeService resumeService, UserManager<User> userManager)
     {
-        _db = db;
+        _resumeService = resumeService;
         _userManager = userManager;
     }
 
@@ -42,27 +43,17 @@ public class ResumeController : Controller
             isOwner = true;
         }
 
-        var query = _db.Resumes
-            .Include(r => r.Category)
-            .Where(r => r.UserId == targetUserId);
-
-        if (!isOwner)
-        {
-            query = query.Where(r => r.IsPublished);
-        }
-
-        List<Resume> resumes = await query
-            .OrderByDescending(r => r.UpdatedAt)
-            .ToListAsync();
+        var resumes=await _resumeService.GetResumesAsync(targetUserId, isOwner);
 
         ViewBag.IsOwner = isOwner;
         return PartialView("~/Views/Resume/Partials/_ResumesList.cshtml", resumes);
     }
+    
 
     [HttpGet]
     public async Task<IActionResult> Create()
     {
-        ViewBag.Categories = await _db.Categories.ToListAsync();
+        ViewBag.Categories = await _resumeService.GetCategoriesAsync();
         return PartialView("~/Views/Resume/Partials/_CreateResume.cshtml", new Resume());
     }
 
@@ -94,13 +85,8 @@ public class ResumeController : Controller
                 message = string.IsNullOrWhiteSpace(message) ? "Пожалуйста, заполните все обязательные поля корректно" : message
             });
         }
-
-        resume.UserId = currentUser.Id;
-        resume.UpdatedAt = DateTime.UtcNow;
-        resume.IsPublished = false;
-
-        _db.Resumes.Add(resume);
-        await _db.SaveChangesAsync();
+        
+        await _resumeService.CreateResumeAsync(resume, currentUser.Id);
 
         return Json(new
         {
@@ -109,6 +95,7 @@ public class ResumeController : Controller
             redirectUrl = Url.Action("Details", "Resume", new { id = resume.Id })
         });
     }
+    
     
     [HttpGet]
     public async Task<IActionResult> Edit(int id)
@@ -120,14 +107,14 @@ public class ResumeController : Controller
             return Unauthorized();
         }
 
-        Resume? resume = await _db.Resumes.FirstOrDefaultAsync(r => r.Id == id && r.UserId == currentUser.Id);
+        Resume? resume = await _resumeService.GetResumeForEditAsync(id, currentUser.Id);
 
         if (resume == null)
         {
             return NotFound();
         }
 
-        ViewBag.Categories = await _db.Categories.ToListAsync();
+        ViewBag.Categories = await _resumeService.GetCategoriesAsync();
         return PartialView("~/Views/Resume/Partials/_EditResume.cshtml", resume);
     }
     
@@ -160,9 +147,9 @@ public class ResumeController : Controller
             });
         }
 
-        Resume? resume = await _db.Resumes.FirstOrDefaultAsync(r => r.Id == model.Id && r.UserId == currentUser.Id);
+       bool isUpdated= await _resumeService.UpdateResumeAsync(model, currentUser.Id);
 
-        if (resume == null)
+        if (!isUpdated)
         {
             return Json(new
             {
@@ -170,18 +157,6 @@ public class ResumeController : Controller
                 message = "Резюме не найдено"
             });
         }
-
-        resume.Title = model.Title;
-        resume.CategoryId = model.CategoryId;
-        resume.Salary = model.Salary;
-
-        resume.Email = model.Email;
-        resume.PhoneNumber = model.PhoneNumber;
-        resume.Telegram = model.Telegram;
-        resume.Facebook = model.Facebook;
-        resume.LinkedIn = model.LinkedIn;
-
-        await _db.SaveChangesAsync();
 
         return Json(new
         {
@@ -199,19 +174,19 @@ public class ResumeController : Controller
             return RedirectToAction("Login", "Account");
         }
 
-        Resume? resume = await _db.Resumes.FirstOrDefaultAsync(r => r.Id == id && r.UserId == currentUser.Id);
+        bool isUpdated = await _resumeService.UpdateDateAsync(id, currentUser.Id);
 
-        if (resume == null)
+        if (!isUpdated)
         {
             return NotFound();
         }
 
-        resume.UpdatedAt = DateTime.UtcNow;
-
-        await _db.SaveChangesAsync();
-
-        return Json(new { success = true });
+        return Json(new
+        {
+            success = true
+        });
     }
+    
     
     [HttpGet]
     public IActionResult AddWorkExperience(int resumeId)
@@ -247,9 +222,8 @@ public class ResumeController : Controller
             return View("~/Views/Resume/WorkExperience/AddWorkExperience.cshtml", workExperience);
         }
 
-        _db.WorkExperiences.Add(workExperience);
-        await _db.SaveChangesAsync();
-
+         await _resumeService.AddWorkExperienceAsync(workExperience);
+        
         return RedirectToAction("Index", "User");
     }
     
@@ -276,9 +250,8 @@ public class ResumeController : Controller
             ViewBag.ResumeId = education.ResumeId;
             return View("~/Views/Resume/Education/AddEducation.cshtml", education);
         }
-
-        _db.Educations.Add(education);
-        await _db.SaveChangesAsync();
+        
+        await _resumeService.AddEducationAsync(education);
 
         return RedirectToAction("Index", "User");
     }
@@ -307,8 +280,7 @@ public class ResumeController : Controller
             return View("~/Views/Resume/Courses/AddCourse.cshtml", course);
         }
 
-        _db.Courses.Add(course);
-        await _db.SaveChangesAsync();
+       await _resumeService.AddCourseAsync(course);
 
         return RedirectToAction("Details", new { id = course.ResumeId });
     }
@@ -323,7 +295,7 @@ public class ResumeController : Controller
             return RedirectToAction("Login", "Account");
         }
 
-        WorkExperience? workExperience = await _db.WorkExperiences.Include(w => w.Resume).FirstOrDefaultAsync(w => w.Id == id && w.Resume!.UserId == currentUser.Id);
+        WorkExperience? workExperience = await _resumeService.GetWorkExperienceForEditAsync(id, currentUser.Id);
 
         if (workExperience == null)
         {
@@ -337,17 +309,29 @@ public class ResumeController : Controller
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> EditWorkExperience(WorkExperience workExperience)
     {
+        User? currentUser = await _userManager.GetUserAsync(User);
+
+        if (currentUser == null)
+        {
+            return RedirectToAction("Login", "Account");
+        }
+        
         if (!ModelState.IsValid)
         {
             return View("~/Views/Resume/WorkExperience/EditWorkExperience.cshtml", workExperience);
         }
 
-        _db.WorkExperiences.Update(workExperience);
-        await _db.SaveChangesAsync();
+        bool isUpdated = await _resumeService.UpdateWorkExperienceAsync(workExperience, currentUser.Id);
 
+        if (!isUpdated)
+        {
+            return NotFound();
+        }
+            
         return RedirectToAction("Details", new { id = workExperience.ResumeId });
     }
 
+    
     [HttpPost]
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> DeleteWorkExperience(int id)
@@ -359,18 +343,13 @@ public class ResumeController : Controller
             return RedirectToAction("Login", "Account");
         }
 
-        WorkExperience? workExperience = await _db.WorkExperiences.Include(w => w.Resume).FirstOrDefaultAsync(w => w.Id == id && w.Resume!.UserId == currentUser.Id);
+        int? resumeId= await _resumeService.DeleteWorkExperienceAsync(id, currentUser.Id);
 
-        if (workExperience == null)
+        if (resumeId== null)
         {
             return NotFound();
         }
         
-        int resumeId = workExperience.ResumeId;
-
-        _db.WorkExperiences.Remove(workExperience);
-        await _db.SaveChangesAsync();
-
         return RedirectToAction("Details", new { id = resumeId });
     }
     
@@ -384,17 +363,7 @@ public class ResumeController : Controller
             return RedirectToAction("Login", "Account");
         }
 
-        Resume? resume = await _db.Resumes
-            .Include(r => r.Category)
-            .Include(r => r.WorkExperiences)
-            .Include(r => r.Educations)
-            .Include(r => r.Courses)
-            .FirstOrDefaultAsync(r => r.Id == id && r.UserId == currentUser.Id);
-
-        if (resume == null)
-        {
-            return NotFound();
-        }
+       var resume= await _resumeService.GetResumeDetailsAsync(id, currentUser.Id);
 
         return View(resume);
     }
@@ -409,20 +378,23 @@ public class ResumeController : Controller
             return RedirectToAction("Login", "Account");
         }
 
-        Education? education = await _db.Educations.Include(e => e.Resume).FirstOrDefaultAsync(e => e.Id == id && e.Resume!.UserId == currentUser.Id);
+        var education = await _resumeService.GetEducationForEditAsync(id, currentUser.Id);
         
-        if (education == null)
-        {
-            return NotFound();
-        }
-
-        return View("~/Views/Resume/Education/EditEducation.cshtml", education);
+       return View("~/Views/Resume/Education/EditEducation.cshtml", education);
     }
+    
 
     [HttpPost]
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> EditEducation(Education education)
     {
+        User? currentUser = await _userManager.GetUserAsync(User);
+
+        if (currentUser == null)
+        {
+            return RedirectToAction("Login", "Account");
+        }
+        
         int currentYear = DateTime.Now.Year;
 
         if (education.GraduationYear < 1900 || education.GraduationYear > currentYear)
@@ -438,11 +410,11 @@ public class ResumeController : Controller
             return View("~/Views/Resume/Education/EditEducation.cshtml", education);
         }
 
-        _db.Educations.Update(education);
-        await _db.SaveChangesAsync();
+        await _resumeService.UpdateEducationAsync(education, currentUser.Id);
 
         return RedirectToAction("Details", new { id = education.ResumeId });
     }
+    
 
     [HttpPost]
     [ValidateAntiForgeryToken]
@@ -455,17 +427,8 @@ public class ResumeController : Controller
             return RedirectToAction("Login", "Account");
         }
 
-        Education? education = await _db.Educations.Include(e => e.Resume).FirstOrDefaultAsync(e => e.Id == id && e.Resume!.UserId == currentUser.Id);
         
-        if (education == null)
-        {
-            return NotFound();
-        }
-
-        int resumeId = education.ResumeId;
-
-        _db.Educations.Remove(education);
-        await _db.SaveChangesAsync();
+        var resumeId = await _resumeService.DeleteEducationAsync(id, currentUser.Id);
 
         return RedirectToAction("Details", new { id = resumeId });
     }
@@ -480,12 +443,7 @@ public class ResumeController : Controller
             return RedirectToAction("Login", "Account");
         }
 
-        Course? course = await _db.Courses.Include(c => c.Resume).FirstOrDefaultAsync(c => c.Id == id && c.Resume!.UserId == currentUser.Id);
-
-        if (course == null)
-        {
-            return NotFound();
-        }
+       var course= await _resumeService.GetCourseForEditAsync(id, currentUser.Id);
 
         return View("~/Views/Resume/Courses/EditCourse.cshtml", course);
     }
@@ -494,6 +452,13 @@ public class ResumeController : Controller
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> EditCourse(Course course)
     {
+        User? currentUser = await _userManager.GetUserAsync(User);
+
+        if (currentUser == null)
+        {
+            return RedirectToAction("Login", "Account");
+        }
+        
         int currentYear = DateTime.Now.Year;
 
         if (course.Year < 1900 || course.Year > currentYear)
@@ -506,12 +471,12 @@ public class ResumeController : Controller
             return View("~/Views/Resume/Courses/EditCourse.cshtml", course);
         }
 
-        _db.Courses.Update(course);
-        await _db.SaveChangesAsync();
+        await _resumeService.UpdateCourseAsync(course, currentUser.Id);
 
         return RedirectToAction("Details", new { id = course.ResumeId });
     }
 
+    
     [HttpPost]
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> DeleteCourse(int id)
@@ -523,25 +488,11 @@ public class ResumeController : Controller
             return RedirectToAction("Login", "Account");
         }
 
-        Course? course = await _db.Courses.Include(c => c.Resume).FirstOrDefaultAsync(c => c.Id == id && c.Resume!.UserId == currentUser.Id);
-
-        if (course == null)
-        {
-            return NotFound();
-        }
-        
-        if (course == null)
-        {
-            return NotFound();
-        }
-
-        int resumeId = course.ResumeId;
-
-        _db.Courses.Remove(course);
-        await _db.SaveChangesAsync();
+       var resumeId= await _resumeService.DeleteCourseAsync(id, currentUser.Id);
 
         return RedirectToAction("Details", new { id = resumeId });
     }
+    
     
     [HttpPost]
     public async Task<IActionResult> TogglePublication(int id)
@@ -553,18 +504,13 @@ public class ResumeController : Controller
             return RedirectToAction("Login", "Account");
         }
 
-        Resume? resume = await _db.Resumes
-            .FirstOrDefaultAsync(r => r.Id == id && r.UserId == currentUser.Id);
+        bool result= await _resumeService.TogglePublicationAsync(id, currentUser.Id);
 
-        if (resume == null)
+        if (!result)
         {
             return NotFound();
         }
-
-        resume.IsPublished = !resume.IsPublished;
-
-        await _db.SaveChangesAsync();
-
+        
         return Json(new { success = true });
     }
     
@@ -572,12 +518,7 @@ public class ResumeController : Controller
     [AllowAnonymous]
     public async Task<IActionResult> Published()
     {
-        List<Resume> resumes = await _db.Resumes
-            .Include(r => r.Category)
-            .Include(r => r.User)
-            .Where(r => r.IsPublished)
-            .OrderByDescending(r => r.UpdatedAt)
-            .ToListAsync();
+       var resumes= await _resumeService.GetPublishedResumesAsync();
 
         return PartialView("Partials/_PublishedResumesPartialView", resumes);
     }
@@ -586,12 +527,7 @@ public class ResumeController : Controller
     [AllowAnonymous]
     public async Task<IActionResult> PublicDetails(int id)
     {
-        Resume? resume = await _db.Resumes
-            .Include(r => r.Category)
-            .Include(r => r.WorkExperiences)
-            .Include(r => r.Educations)
-            .Include(r => r.Courses)
-            .FirstOrDefaultAsync(r => r.Id == id && r.IsPublished);
+        Resume? resume = await _resumeService.GetPublicDetails(id);
 
         if (resume == null)
         {
@@ -604,34 +540,23 @@ public class ResumeController : Controller
 
             if (currentCompany != null)
             {
-                ViewBag.Vacancies = await _db.Vacancies.Where(v => v.CompanyId == currentCompany.Id && v.IsPublished).OrderByDescending(v => v.CreatedAt).ToListAsync();
+                ViewBag.Vacancies = await _resumeService.GetCompanyVacanciesAsync(id);
             }
         }
 
         return View(resume);
     }
+    
 
     [HttpGet]
     [Authorize(Roles = "company")]
     public async Task<IActionResult> BrowseByCategory(int? categoryId)
     {
-        ViewBag.Categories = await _db.Categories
-            .OrderBy(c => c.Name)
-            .ToListAsync();
+        ViewBag.Categories = await _resumeService.GetCategoriesAsync();
         
         ViewBag.SelectedCategoryId = categoryId;
-        var query = _db.Resumes
-            .Include(r => r.Category)
-            .Include(r => r.User)
-            .Where(r => r.IsPublished);
-
-        if (categoryId.HasValue)
-        {
-            query=query.Where(r=>r.CategoryId==categoryId.Value);
-        }
-
-        var rezumes = await query.OrderByDescending(r => r.UpdatedAt)
-            .ToListAsync();
+        var rezumes= await _resumeService.GetResumesByCategoryAsync(categoryId);
+        
         return View(rezumes);
     }
 }
