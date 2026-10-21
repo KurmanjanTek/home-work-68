@@ -1,4 +1,5 @@
 using home_work_66.Models;
+using home_work_66.Services.Interfaces;
 using home_work_66.ViewModels;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
@@ -11,64 +12,51 @@ namespace home_work_66.Controllers;
 public class ChatController : Controller
 {
     private readonly UserManager<User> _userManager;
-    private readonly HeadHunterContext _db;
+    private readonly IChatService _chatService;
 
-    public ChatController(UserManager<User> userManager, HeadHunterContext db)
+    public ChatController(UserManager<User> userManager, IChatService chatService)
     {
         _userManager = userManager;
-        _db = db;
+        _chatService = chatService;
+       
     }
-    
+
     [HttpPost]
     [ValidateAntiForgeryToken]
-    public async Task<IActionResult> Create(ChatCreateViewModel model)
+    public async Task<IActionResult> CreateChatAsync(ChatCreateViewModel model)
     {
         int userId = int.Parse(_userManager.GetUserId(User)!);
-        if (ModelState.IsValid)
-        {
-            var existingChat = await _db.Chats.FirstOrDefaultAsync(c =>
-                c.UserId == userId && c.VacancyId == model.VacancyId);
-            if (existingChat != null)
-            {
-                return RedirectToAction("Index", new { id = existingChat.Id, companyId = existingChat.CompanyId });
-            }
-            Chat chat = new Chat()
-            {
-                UserId = userId,
-                CompanyId = model.CompanyId,
-                VacancyId = model.VacancyId,
-                ResumeId = model.ResumeId.Value,
-            };
-            await _db.Chats.AddAsync(chat);
-            await _db.SaveChangesAsync();
-            return RedirectToAction("Index", new { id = chat.Id, companyId = chat.CompanyId });
-        }
-        return NotFound();
-    }
 
-    public async Task<IActionResult> Index(int id, int companyId)
-    {
-        var chat = await _db.Chats
-            .Include(x => x.Vacancy)
-            .Include(x => x.Resume)
-            .Include(x => x.User)
-            .Include(x => x.Company)
-            .FirstOrDefaultAsync(x => x.Id == id);
-
-        if (chat == null)
+        if (!ModelState.IsValid)
         {
             return NotFound();
         }
+            
+        var chat = await _chatService.CreateChatAsync(model, userId);
 
-        var messages = await _db.Messages
-            .Where(x => x.ChatId == id)
-            .Include(x => x.User)
-            .OrderBy(x => x.CreatedAt)
-            .ToListAsync();
+        if (chat == null)
+            return NotFound();
+
+        return RedirectToAction("Index", new
+        {
+            id = chat.Id,
+            companyId = chat.CompanyId
+        });
+    }
+
+
+    public async Task<IActionResult> Index(int id, int companyId) 
+    { 
+        var chat = await _chatService.GetChatAsync(id);
+        if (chat == null)
+            return NotFound();
+
+        var messages = await _chatService.GetMessagesAsync(id);
 
         ViewBag.UserId = int.Parse(_userManager.GetUserId(User)!);
         ViewBag.CompanyId = companyId;
         ViewBag.ChatId = id;
+
         return View(new ChatPageViewModel
         {
             Chat = chat,
@@ -76,96 +64,44 @@ public class ChatController : Controller
         });
     }
     
-    public async Task<IActionResult> UpdateListAsync(int? id)
-    {
-        var messages = await _db.Messages
-            .Where(x => x.ChatId == id)
-            .Include(x => x.User)
-            .OrderBy(x => x.CreatedAt)
-            .ToListAsync();
+    public async Task<IActionResult> UpdateListAsync(int? id) 
+    { 
+        if (id == null) return NotFound();
+        var messages = await _chatService.GetMessagesAsync(id.Value);
 
         ViewBag.UserId = int.Parse(_userManager.GetUserId(User)!);
+
         return PartialView("_ChatPartialView", messages);
     }
     
     [HttpPost]
     [ValidateAntiForgeryToken]
-    public async Task<IActionResult> SendMessageAsync(MessageCreateViewModel model)
-    {
+    public async Task<IActionResult> SendMessageAsync(MessageCreateViewModel model) 
+    { 
         int userId = int.Parse(_userManager.GetUserId(User)!);
-        if (ModelState.IsValid)
-        {
-            Message message = new Message()
-            {
-                Content = model.Content,
-                UserId = userId,
-                CreatedAt = DateTime.UtcNow,
-                ChatId = model.ChatId
-            };
-            var result = await _db.Messages.AddAsync(message);
-            if (result.State == EntityState.Added)
-                await _db.SaveChangesAsync();
+        if (!ModelState.IsValid)
+            return Json(new { success = false });
 
-            var messages = await _db.Messages
-                .Where(x => x.ChatId == model.ChatId)
-                .Include(x => x.User)
-                .OrderBy(x => x.CreatedAt)
-                .ToListAsync();
+        await _chatService.SendMessageAsync(model, userId);
 
-            ViewBag.UserId = userId;
-            return PartialView("_ChatPartialView", messages);
-        }
-        return Json(new { success = false });
+        var messages = await _chatService.GetMessagesAsync(model.ChatId);
+
+        ViewBag.UserId = userId;
+
+        return PartialView("_ChatPartialView", messages);
     }
     
     [HttpPost]
     [Authorize(Roles = "company")]
     [ValidateAntiForgeryToken]
-    public async Task<IActionResult> CreateFromResume(int resumeId, int vacancyId)
-    {
+    public async Task<IActionResult> CreateFromResume(int resumeId, int vacancyId) 
+    { 
         int companyId = int.Parse(_userManager.GetUserId(User)!);
+        var chat = await _chatService.CreateChatFromResumeAsync(
+            resumeId, vacancyId, companyId);
 
-        Resume? resume = await _db.Resumes
-            .FirstOrDefaultAsync(r => r.Id == resumeId && r.IsPublished);
-
-        if (resume == null)
-        {
+        if (chat == null)
             return NotFound();
-        }
-
-        Vacancy? vacancy = await _db.Vacancies
-            .FirstOrDefaultAsync(v => v.Id == vacancyId && v.CompanyId == companyId);
-
-        if (vacancy == null)
-        {
-            return NotFound();
-        }
-
-        Chat? existingChat = await _db.Chats
-            .FirstOrDefaultAsync(c =>
-                c.UserId == resume.UserId &&
-                c.CompanyId == companyId &&
-                c.VacancyId == vacancyId);
-
-        if (existingChat != null)
-        {
-            return RedirectToAction("Index", new
-            {
-                id = existingChat.Id,
-                companyId = existingChat.CompanyId
-            });
-        }
-
-        Chat chat = new Chat
-        {
-            UserId = resume.UserId,
-            CompanyId = companyId,
-            ResumeId = resume.Id,
-            VacancyId = vacancy.Id
-        };
-
-        await _db.Chats.AddAsync(chat);
-        await _db.SaveChangesAsync();
 
         return RedirectToAction("Index", new
         {

@@ -1,5 +1,6 @@
 using home_work_66.Models;
 using home_work_66.Services;
+using home_work_66.Services.Interfaces;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 
@@ -19,6 +20,10 @@ builder.Services.AddDbContext<HeadHunterContext>(options => options.UseNpgsql(co
         options.User.AllowedUserNameCharacters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._@+ абвгдеёжзийклмнопрстуфхцчшщъыьэюяАБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯөүңӨҮҢ";
     })
     .AddEntityFrameworkStores<HeadHunterContext>();
+
+builder.Services.AddScoped<ICompanyService, CompanyService>();
+builder.Services.AddScoped<ICategoryService, CategoryService>();
+builder.Services.AddScoped<IChatService, ChatService>();
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.

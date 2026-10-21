@@ -1,4 +1,5 @@
 using home_work_66.Models;
+using home_work_66.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -9,63 +10,69 @@ namespace home_work_66.Controllers;
 public class CategoryController : Controller
 {
     private readonly HeadHunterContext _db;
+    private ICategoryService _categoryService;
 
-    public CategoryController(HeadHunterContext db)
+    public CategoryController(HeadHunterContext db, ICategoryService categoryService)
     {
         _db = db;
+        _categoryService = categoryService;
     }
 
     [HttpGet]
     public async Task<IActionResult> Index()
     {
-        var categories = await _db.Categories
-            .OrderBy(c => c.Name)
-            .ToListAsync();
+        var categories = await _categoryService.GetAllCategoriesAsync();
         return View(categories);
     }
 
     [HttpPost]
-    [ValidateAntiForgeryToken]
-    public async Task<IActionResult> Create(Category category)
+    [ValidateAntiForgeryToken] 
+    public async Task<IActionResult> Create(Category category) 
     {
         if (string.IsNullOrWhiteSpace(category.Name))
         {
-            return Json(new { success = false, message = "Название категории не может быть пустым" });
+            return Json(new
+            {
+                success = false, message = "Название категории не может быть пустым"
+            });
         }
+        bool success = await _categoryService.CreateCategoryAsync(category);
 
-        string trimmedName = category.Name.Trim();
-        bool exists = await _db.Categories.AnyAsync(c => c.Name.ToLower() == trimmedName.ToLower());
-        if (exists)
+        if (!success)
         {
-            return Json(new { success = false, message = "Категория с таким названием уже существует" });
+            return Json(new
+            {
+                success = false,
+                message = "Категория с таким названием уже существует"
+            });
         }
 
-        category.Name = trimmedName;
-        _db.Categories.Add(category);
-        await _db.SaveChangesAsync();
-
-        return Json(new { success = true, id = category.Id, name = category.Name });
+        return Json(new
+        {
+            success = true,
+            id = category.Id,
+            name = category.Name
+        });
     }
-
-    [HttpPost]
-    [ValidateAntiForgeryToken]
-    public async Task<IActionResult> Delete(int id)
-    {
-        var category = await _db.Categories.FindAsync(id);
-        if (category == null)
+    
+    [HttpPost] 
+    [ValidateAntiForgeryToken] 
+    public async Task<IActionResult> Delete(int id) 
+    { 
+        bool success = await _categoryService.DeleteCategoryAsync(id);
+        if (!success)
         {
-            return Json(new { success = false, message = "Категория не найдена" });
+            return Json(new
+            {
+                success = false,
+                message = "Категория не найдена или к ней привязаны резюме"
+            });
         }
 
-        bool hasResumes = await _db.Resumes.AnyAsync(r => r.CategoryId == id);
-        if (hasResumes)
+        return Json(new
         {
-            return Json(new { success = false, message = "Нельзя удалить категорию, к которой привязаны резюме" });
-        }
-
-        _db.Categories.Remove(category);
-        await _db.SaveChangesAsync();
-
-        return Json(new { success = true, id });
+            success = true,
+            id = id
+        });
     }
 }
