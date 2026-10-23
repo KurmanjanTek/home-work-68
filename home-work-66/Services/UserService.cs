@@ -12,7 +12,7 @@ public class UserService: IUserService
     private readonly UserManager<User> _userManager;
     private readonly IWebHostEnvironment _environment;
     
-    public UserService(HeadHunterContext db, UserManager<User> userManager, IWebHostEnvironment environment, IUserService userService)
+    public UserService(HeadHunterContext db, UserManager<User> userManager, IWebHostEnvironment environment)
     {
         _db = db;
         _userManager = userManager;
